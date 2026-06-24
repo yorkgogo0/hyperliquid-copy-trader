@@ -47,7 +47,7 @@ def run(whale_address, poll_seconds=30, max_iterations=None):
         for coin in diff["opened"]:
             whale_pos = whale_state["positions"][coin]
 
-            confirmed, reasoning, _ = confirmation.confirm_direction(coin, whale_pos["side"])
+            confirmed, reasoning, report = confirmation.confirm_direction(coin, whale_pos["side"])
             if not confirmed:
                 log(f"Whale opened {whale_pos['side']} {coin} - DECLINED, no independent confirmation: {reasoning}")
                 continue
@@ -56,12 +56,13 @@ def run(whale_address, poll_seconds=30, max_iterations=None):
                 log(f"Whale opened {coin}, confirmed, but we're at the {config.MAX_CONCURRENT_POSITIONS}-position cap - skipping")
                 continue
 
+            size_tier = report["size_tier"] if report else "Full"
             sizing = risk.compute_copy_size(
                 my_state["account_value"], whale_state["account_value"], whale_pos,
-                config.MAX_RISK_PCT_PER_TRADE, config.MAX_LEVERAGE,
+                config.MAX_RISK_PCT_PER_TRADE, config.MAX_LEVERAGE, size_tier=size_tier,
             )
-            log(f"Whale opened {whale_pos['side']} {coin} - CONFIRMED ({len(reasoning)} supporting signals), "
-                f"copying {sizing['size']:.6f} ({sizing['our_risk_pct']:.1f}% risk, {sizing['leverage']}x)")
+            log(f"Whale opened {whale_pos['side']} {coin} - CONFIRMED ({len(reasoning)} supporting signals, "
+                f"{size_tier} size tier), copying {sizing['size']:.6f} ({sizing['our_risk_pct']:.1f}% risk, {sizing['leverage']}x)")
             result = executor.place_market_order(coin, whale_pos["side"] == "Long", sizing["size"])
             log(f"Order result: {result}")
             journal.log_open(coin, whale_pos["side"], sizing["size"], whale_address, whale_pos["entry_price"], reasoning)

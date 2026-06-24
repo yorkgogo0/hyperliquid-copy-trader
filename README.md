@@ -57,6 +57,10 @@ next time" - there's nothing to apply lessons from without an actual logged reco
 
 - Position sizing: proportional to account size (mirrors the tracked wallet's risk as a %
   of *their* equity, scaled to yours), capped at **3% max risk per trade**
+- **Tiered by confirmation confidence**: bitcoin-intel-agent's confidence tier scales the
+  position further - Small (50-59% confidence) = 0.4x, Normal (60-69%) = 0.7x, Full (70%+)
+  = 1.0x of the 3% cap. A confirmed-but-lower-confidence copy still gets taken, just smaller
+  - more trade frequency without increasing per-trade risk.
 - Max leverage: **5x**, regardless of what the tracked wallet uses
 - Max concurrent copied positions: **5**
 - Daily loss circuit breaker: **5%** - auto-pause, requires manual re-enable
