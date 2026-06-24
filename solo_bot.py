@@ -26,7 +26,10 @@ import risk
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "bitcoin-intel-agent"))
 from bitcoin_intel_agent import run_analysis  # noqa: E402
 
-COINS = ["BTC", "ETH", "SOL", "HYPE"]
+COINS = ["BTC", "ETH", "SOL", "HYPE", "ZEC", "SUI", "WLD", "NEAR"]  # top-10-by-real-volume,
+# confirmed listed on testnet, confirmed run_analysis() works on each - expanded from just
+# BTC/ETH/SOL/HYPE so MAX_CONCURRENT_POSITIONS (5) is actually reachable, not capped at 4
+# by coin count alone.
 
 
 def log(msg):
