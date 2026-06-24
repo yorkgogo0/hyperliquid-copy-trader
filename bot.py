@@ -62,10 +62,17 @@ def run(whale_address, poll_seconds=30, max_iterations=None):
                 config.MAX_RISK_PCT_PER_TRADE, config.MAX_LEVERAGE, size_tier=size_tier,
             )
             log(f"Whale opened {whale_pos['side']} {coin} - CONFIRMED ({len(reasoning)} supporting signals, "
-                f"{size_tier} size tier), copying {sizing['size']:.6f} ({sizing['our_risk_pct']:.1f}% risk, {sizing['leverage']}x)")
-            result = executor.place_market_order(coin, whale_pos["side"] == "Long", sizing["size"])
+                f"{size_tier} size tier), requesting {sizing['size']:.6f} ({sizing['our_risk_pct']:.1f}% risk, {sizing['leverage']}x)")
+            result = executor.place_market_order(coin, whale_pos["side"] == "Long", sizing["size"], leverage=sizing["leverage"])
             log(f"Order result: {result}")
-            journal.log_open(coin, whale_pos["side"], sizing["size"], whale_address, whale_pos["entry_price"], reasoning)
+            try:
+                fill = result["response"]["data"]["statuses"][0]["filled"]
+                filled_size, filled_price = float(fill["totalSz"]), float(fill["avgPx"])
+                if filled_size != sizing["size"]:
+                    log(f"{coin}: requested {sizing['size']:.6f} but only {filled_size} filled (testnet liquidity)")
+                journal.log_open(coin, whale_pos["side"], filled_size, whale_address, filled_price, reasoning)
+            except (KeyError, IndexError, TypeError):
+                log(f"{coin}: could not parse fill - not journaling an entry I can't verify actually happened")
 
         for coin in diff["closed"]:
             log(f"Whale closed {coin} - closing our mirrored position")

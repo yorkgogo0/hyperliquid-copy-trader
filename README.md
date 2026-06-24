@@ -53,6 +53,25 @@ were misleading"). View it in the dashboard's **Trade Journal** menu, including 
 and cumulative P&L. This is real history to learn from, not a vague promise to "do better
 next time" - there's nothing to apply lessons from without an actual logged record.
 
+## Solo strategy mode (`solo_bot.py`)
+
+No whale, no confirmation gate (there's nothing to confirm against) - trades directly off
+bitcoin-intel-agent's own Long/Short calls across BTC/ETH/SOL/HYPE, sized by confidence
+tier. Exits when the live analysis no longer agrees with holding the position (bias
+changed) or price crosses the freshly-recomputed invalidation/target. Same risk limits,
+same journal.
+
+Two real bugs caught live while testing this before running it indefinitely:
+- **Order size precision**: Hyperliquid rejects sizes with more decimals than an asset
+  allows (HYPE/SOL: 2, ETH: 4, BTC: 5) - `executor.round_size()` fixes this for every order.
+- **Leverage was never being set explicitly** - a position opened at ~10x when the sizing
+  math assumed 5x, because the exchange uses whatever was last configured for that
+  coin/account rather than something tied to each order. `place_market_order` now takes a
+  `leverage` argument and sets it before submitting.
+- Testnet liquidity is consistently thin enough that orders partially fill or fail to match
+  at the default 1% slippage - raised the default to 3%, and both bots now journal the
+  *actual filled* size/price, not the requested ones.
+
 ## Risk limits (current defaults - see `config.py`, confirm/adjust before going further)
 
 - Position sizing: proportional to account size (mirrors the tracked wallet's risk as a %
@@ -73,7 +92,8 @@ next time" - there's nothing to apply lessons from without an actual logged reco
 - `confirmation.py` - smart-money confirmation gate, depends on bitcoin-intel-agent's analysis
 - `executor.py` - order placement via the official SDK, signed by the agent wallet, acting on the master account
 - `journal.py` - trade journal logging and outcome notes
-- `bot.py` - the loop: polls a tracked wallet, confirms, copies opens/closes within risk limits, halts on the circuit breaker
+- `bot.py` - whale-copy loop: polls a tracked wallet, confirms, copies opens/closes within risk limits, halts on the circuit breaker
+- `solo_bot.py` - solo strategy loop: trades directly off bitcoin-intel-agent's own calls, no whale
 - `dashboard.py` - Account Overview + Trade Journal menu
 
 ## Known gaps
