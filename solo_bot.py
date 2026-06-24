@@ -33,6 +33,10 @@ def log(msg):
     print(f"[{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}] {msg}")
 
 
+def _row_opened_ms(row):
+    return int(datetime.strptime(row["opened_at"], "%Y-%m-%d %H:%M:%S UTC").replace(tzinfo=timezone.utc).timestamp() * 1000)
+
+
 def reconcile_phantom_closes(info, my_state):
     """A journal row can still show 'open' for a coin we no longer hold if something closed
     it outside our own exit logic - in practice, a liquidation (caught live: a position
@@ -42,18 +46,16 @@ def reconcile_phantom_closes(info, my_state):
     for row in journal.load_journal():
         if row["closed_at"] or row["coin"] in my_state["positions"]:
             continue
-        opened_at = datetime.strptime(row["opened_at"], "%Y-%m-%d %H:%M:%S UTC").replace(tzinfo=timezone.utc)
-        since_ms = int(opened_at.timestamp() * 1000)
-        fills = monitor.fetch_closing_fills(info, config.ACCOUNT_ADDRESS, row["coin"], since_ms)
-        if not fills:
+        result = monitor.fetch_realized_pnl(info, config.ACCOUNT_ADDRESS, row["coin"], _row_opened_ms(row))
+        if not result["has_close"]:
             log(f"{row['coin']}: journal shows open but position is gone, and no closing fills found - leaving as-is")
             continue
-        total_size = sum(float(f["sz"]) for f in fills)
-        avg_price = sum(float(f["sz"]) * float(f["px"]) for f in fills) / total_size
-        total_pnl = sum(float(f.get("closedPnl") or 0.0) for f in fills)
-        was_liquidated = any(f.get("liquidation") for f in fills)
-        log(f"{row['coin']}: reconciling phantom close - {'LIQUIDATED' if was_liquidated else 'closed externally'} at avg ${avg_price:,.4f}, pnl ${total_pnl:+.2f}")
-        journal.log_close(row["coin"], avg_price, total_pnl, liquidated=was_liquidated)
+        log(
+            f"{row['coin']}: reconciling phantom close - "
+            f"{'LIQUIDATED' if result['liquidated'] else 'closed externally'} at avg "
+            f"${result['avg_exit_price']:,.4f}, net pnl ${result['pnl']:+.2f}"
+        )
+        journal.log_close(row["coin"], result["avg_exit_price"], result["pnl"], liquidated=result["liquidated"])
 
 
 def compute_solo_size(my_account_value, entry_price, size_tier, leverage):
@@ -102,13 +104,15 @@ def run(poll_seconds=60, max_iterations=None):
                 if not should_exit and report["target"]:
                     should_exit = (price >= report["target"]) if held["side"] == "Long" else (price <= report["target"])
                 if should_exit:
-                    last_known_pnl = held["unrealized_pnl"]
+                    open_row = journal.find_open_row(coin)
                     log(f"{coin}: closing {held['side']} - bias now {report['bias']}, price {price:,.2f}")
                     result = executor.close_position(coin)
                     log(f"Close result: {result}")
                     try:
-                        exit_price = float(result["response"]["data"]["statuses"][0]["filled"]["avgPx"])
-                        journal.log_close(coin, exit_price, last_known_pnl)
+                        since_ms = _row_opened_ms(open_row) if open_row else int(time.time() * 1000) - 5000
+                        pnl_result = monitor.fetch_realized_pnl(info, config.ACCOUNT_ADDRESS, coin, since_ms)
+                        log(f"{coin}: net realized pnl ${pnl_result['pnl']:+.4f} (after both open and close fees)")
+                        journal.log_close(coin, pnl_result["avg_exit_price"], pnl_result["pnl"])
                     except (KeyError, IndexError, TypeError):
                         log(f"Could not parse close fill for journal - {coin}")
                 continue

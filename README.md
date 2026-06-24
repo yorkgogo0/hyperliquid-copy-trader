@@ -95,6 +95,28 @@ looks up the real closing fill (including Hyperliquid's own `liquidation` flag) 
 normal win/loss framing - getting liquidated isn't evidence the entry signal was wrong,
 it's a margin/sizing problem.
 
+### PnL accuracy (`monitor.fetch_realized_pnl`)
+
+The journal's `pnl_usd` is the *net* economic result of a round trip - gross `closedPnl`
+from the closing fill(s), minus **both** the opening and closing fee. Two real bugs found
+by checking logged numbers against the exchange's own trade history (asked "how did I make
+18 cents here" when the real number was $0.01):
+
+1. The journal was logging the position's stale pre-close `unrealized_pnl` snapshot
+   (captured before the close order even executed), not the actual realized PnL from the
+   fill that closed it.
+2. Even fixed to use the real `closedPnl`, it still didn't match Hyperliquid's own UI -
+   because that UI column only nets the *closing* fee against the price PnL, not the
+   *opening* fee paid earlier (verified live: a $0.0679 gross gain, minus the $0.0607
+   closing fee, displays as the UI's "$0.01" - the $0.0607 opening fee paid earlier is never
+   subtracted there, since the UI shows opens and closes as separate rows). A journal row
+   represents one full round trip, so both fees get netted, which won't match the per-row
+   UI number and is correct, not a bug.
+
+Win/loss in the outcome note is decided by `pnl_usd` (the net dollar result), not
+`pnl_pct` (price move only) - on small trades the two can disagree, e.g. a real result of
+"price moved favorably but fees outweighed the gain" needs to show as a loss, not a win.
+
 Two real bugs caught live while testing this before running it indefinitely:
 - **Order size precision**: Hyperliquid rejects sizes with more decimals than an asset
   allows (HYPE/SOL: 2, ETH: 4, BTC: 5) - `executor.round_size()` fixes this for every order.

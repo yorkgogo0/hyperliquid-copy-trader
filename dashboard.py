@@ -81,7 +81,7 @@ else:
         cols = st.columns(3)
         cols[0].metric("Total Trades", len(df))
         if len(closed) > 0:
-            wins = (closed["pnl_pct"].astype(float) > 0).sum()
+            wins = (closed["pnl_usd"].astype(float) > 0).sum()
             cols[1].metric("Win Rate", f"{wins / len(closed) * 100:.0f}%  ({wins}/{len(closed)})")
             cols[2].metric("Total P&L", f"${closed['pnl_usd'].astype(float).sum():+,.2f}")
 
@@ -96,7 +96,7 @@ else:
 
         st.divider()
         for _, row in df[::-1].iterrows():
-            status = "OPEN" if not row["closed_at"] else ("WIN" if float(row["pnl_pct"] or 0) > 0 else "LOSS")
+            status = "OPEN" if not row["closed_at"] else ("WIN" if float(row["pnl_usd"] or 0) > 0 else "LOSS")
             with st.expander(f"{row['opened_at']} - {row['side']} {row['coin']} - {status}"):
                 st.write(f"**Whale tracked:** {row['whale_address']}")
                 st.write(f"**Entry:** ${float(row['entry_price']):,.4f} | **Size:** {row['size']}")

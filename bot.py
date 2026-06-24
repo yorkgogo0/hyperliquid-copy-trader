@@ -26,6 +26,10 @@ def log(msg):
     print(f"[{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}] {msg}")
 
 
+def _row_opened_ms(row):
+    return int(datetime.strptime(row["opened_at"], "%Y-%m-%d %H:%M:%S UTC").replace(tzinfo=timezone.utc).timestamp() * 1000)
+
+
 def run(whale_address, poll_seconds=30, max_iterations=None):
     info = monitor.make_info_client()
     previous_whale_positions = {}
@@ -76,12 +80,14 @@ def run(whale_address, poll_seconds=30, max_iterations=None):
 
         for coin in diff["closed"]:
             log(f"Whale closed {coin} - closing our mirrored position")
-            last_known_pnl = my_state["positions"].get(coin, {}).get("unrealized_pnl", 0.0)
+            open_row = journal.find_open_row(coin)
             result = executor.close_position(coin)
             log(f"Close result: {result}")
             try:
-                exit_price = float(result["response"]["data"]["statuses"][0]["filled"]["avgPx"])
-                journal.log_close(coin, exit_price, last_known_pnl)
+                since_ms = _row_opened_ms(open_row) if open_row else int(time.time() * 1000) - 5000
+                pnl_result = monitor.fetch_realized_pnl(info, config.ACCOUNT_ADDRESS, coin, since_ms)
+                log(f"{coin}: net realized pnl ${pnl_result['pnl']:+.4f} (after both open and close fees)")
+                journal.log_close(coin, pnl_result["avg_exit_price"], pnl_result["pnl"])
             except (KeyError, IndexError, TypeError):
                 log(f"Could not parse close fill for journal - logged order result above, journal entry left open for {coin}")
 

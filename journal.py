@@ -24,21 +24,38 @@ def log_open(coin, side, size, whale_address, entry_price, reasoning):
         ])
 
 
-def _generate_outcome_note(side, confirmation_reasoning, pnl_pct, liquidated=False):
-    won = pnl_pct > 0
+def _generate_outcome_note(side, confirmation_reasoning, pnl_pct, pnl_usd, liquidated=False):
+    """Win/loss is decided by pnl_usd (net of both open and close fees), not pnl_pct (price
+    move only) - the two can disagree on small trades where fees roughly cancel out a tiny
+    favorable price move, and what actually happened to the account is what matters here."""
+    won = pnl_usd > 0
     signal_count = len(confirmation_reasoning.split(" | ")) if confirmation_reasoning else 0
     if liquidated:
         return (
-            f"LIQUIDATED ({pnl_pct:+.2f}%): position was force-closed by the exchange before "
-            f"the strategy's own exit logic acted - this is a margin/sizing problem, not "
-            f"evidence the {signal_count} entry signal(s) were wrong."
+            f"LIQUIDATED (${pnl_usd:+.4f}, {pnl_pct:+.2f}% price move): position was force-closed "
+            f"by the exchange before the strategy's own exit logic acted - this is a margin/sizing "
+            f"problem, not evidence the {signal_count} entry signal(s) were wrong."
         )
     if won:
-        return f"Won ({pnl_pct:+.2f}%): entered with {signal_count} confirming signal(s) - direction played out as expected."
+        return f"Won (${pnl_usd:+.4f}): entered with {signal_count} confirming signal(s) - direction played out as expected."
+    if pnl_pct > 0:
+        return (
+            f"Lost (${pnl_usd:+.4f} after fees, despite a {pnl_pct:+.2f}% favorable price move): "
+            f"entered with {signal_count} confirming signal(s) - fees alone outweighed the gain on this size."
+        )
     return (
-        f"Lost ({pnl_pct:+.2f}%): entered with {signal_count} confirming signal(s) at the time, "
+        f"Lost (${pnl_usd:+.4f}, {pnl_pct:+.2f}%): entered with {signal_count} confirming signal(s) at the time, "
         f"but price moved against the position - worth reviewing which signal(s) were misleading."
     )
+
+
+def find_open_row(coin):
+    """Most recent still-open journal row for this coin, or None - lets a caller look up
+    a position's real open time before closing it (e.g. to scope a fills query)."""
+    for row in reversed(load_journal()):
+        if row["coin"] == coin and not row["closed_at"]:
+            return row
+    return None
 
 
 def log_close(coin, exit_price, pnl_usd, liquidated=False):
@@ -61,7 +78,7 @@ def log_close(coin, exit_price, pnl_usd, liquidated=False):
             row["exit_price"] = f"{exit_price:.6f}"
             row["pnl_usd"] = f"{pnl_usd:.4f}"
             row["pnl_pct"] = f"{pnl_pct:.2f}"
-            row["outcome_note"] = _generate_outcome_note(row["side"], row["confirmation_reasoning"], pnl_pct, liquidated)
+            row["outcome_note"] = _generate_outcome_note(row["side"], row["confirmation_reasoning"], pnl_pct, pnl_usd, liquidated)
             updated_row = row
             break
 
