@@ -21,6 +21,7 @@ def fetch_wallet_state(info, address):
             "entry_price": float(pos["entryPx"]),
             "margin_used": float(pos["marginUsed"]),
             "position_value_usd": float(pos["positionValue"]),
+            "unrealized_pnl": float(pos["unrealizedPnl"]),
         }
     return {"account_value": float(state["marginSummary"]["accountValue"]), "positions": positions}
 
