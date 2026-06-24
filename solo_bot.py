@@ -34,7 +34,15 @@ def log(msg):
 
 
 def _row_opened_ms(row):
-    return int(datetime.strptime(row["opened_at"], "%Y-%m-%d %H:%M:%S UTC").replace(tzinfo=timezone.utc).timestamp() * 1000)
+    """A journal row's 'opened_at' is stamped by datetime.now() *after* the open fill
+    already executed on the exchange - there's always a small gap (network round trip,
+    parsing the result). Caught live: a real fill at 02:52:00.173 got logged as 02:52:02,
+    a ~1.8s gap that was enough to exclude the opening fee from a fee-window lookup keyed
+    off this timestamp, silently dropping ~$0.06 from a net-pnl calculation. The 10s buffer
+    is comfortably bigger than that gap and comfortably smaller than the ~60s+ poll interval
+    between distinct trades, so it can't accidentally pull in an unrelated earlier trade."""
+    exact_ms = int(datetime.strptime(row["opened_at"], "%Y-%m-%d %H:%M:%S UTC").replace(tzinfo=timezone.utc).timestamp() * 1000)
+    return exact_ms - 10_000
 
 
 def reconcile_phantom_closes(info, my_state):

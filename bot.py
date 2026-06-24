@@ -27,7 +27,11 @@ def log(msg):
 
 
 def _row_opened_ms(row):
-    return int(datetime.strptime(row["opened_at"], "%Y-%m-%d %H:%M:%S UTC").replace(tzinfo=timezone.utc).timestamp() * 1000)
+    """See solo_bot.py's _row_opened_ms - a journal row's 'opened_at' is stamped after the
+    open fill already executed, so a 10s buffer is needed to reliably include the opening
+    fee in any fee-window lookup keyed off this timestamp."""
+    exact_ms = int(datetime.strptime(row["opened_at"], "%Y-%m-%d %H:%M:%S UTC").replace(tzinfo=timezone.utc).timestamp() * 1000)
+    return exact_ms - 10_000
 
 
 def run(whale_address, poll_seconds=30, max_iterations=None):
