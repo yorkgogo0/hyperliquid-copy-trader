@@ -61,6 +61,40 @@ tier. Exits when the live analysis no longer agrees with holding the position (b
 changed) or price crosses the freshly-recomputed invalidation/target. Same risk limits,
 same journal.
 
+## Bot Control (start/stop + leverage, from the dashboard)
+
+The dashboard's **Bot Control** page writes to `bot_control.json`; the already-running bot
+process (`solo_bot.py`, started separately - see Run below) reads it every poll cycle.
+Streamlit's request/response model isn't suited to hosting the actual long-running loop
+itself, so the dashboard only ever edits this shared file - it never starts or kills the
+bot process directly.
+
+- **Trading enabled / Paused toggle** - paused means no *new* positions get opened, but
+  exits on anything already open are still managed. Abandoning risk management on an open
+  position because trading was paused would be worse than just not opening anything new.
+- **Leverage (1x/2x/5x/10x)** - applies to new positions only, via the SDK's
+  `update_leverage` call right before each order. Doesn't retroactively change positions
+  already open.
+
+**A real liquidation happened during testing**, which is why the reconciliation logic
+below exists. A position got force-closed by the exchange (not by `solo_bot.py`'s own exit
+logic) while two positions were open concurrently under cross margin - cross margin shares
+one pool across all open positions, so the per-trade "5x leverage, 3% risk" framing
+understates real liquidation risk once more than one position is open at once. Worth
+deciding deliberately (tighter `MAX_CONCURRENT_POSITIONS`, isolated margin, or sizing off
+available rather than total margin) rather than assuming the existing caps already cover it.
+
+### Reconciliation
+
+If a journaled-open position disappears without `solo_bot.py`'s own `executor.close_position()`
+ever being called - in practice, a liquidation - the journal would otherwise show that
+trade as permanently "still open" forever. `reconcile_phantom_closes()` runs at the start
+of every poll cycle: for any open journal row whose coin isn't actually held anymore, it
+looks up the real closing fill (including Hyperliquid's own `liquidation` flag) via
+`userFills` and logs the true outcome, with an explicit `LIQUIDATED` note rather than the
+normal win/loss framing - getting liquidated isn't evidence the entry signal was wrong,
+it's a margin/sizing problem.
+
 Two real bugs caught live while testing this before running it indefinitely:
 - **Order size precision**: Hyperliquid rejects sizes with more decimals than an asset
   allows (HYPE/SOL: 2, ETH: 4, BTC: 5) - `executor.round_size()` fixes this for every order.

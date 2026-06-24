@@ -26,6 +26,17 @@ def fetch_wallet_state(info, address):
     return {"account_value": float(state["marginSummary"]["accountValue"]), "positions": positions}
 
 
+def fetch_closing_fills(info, address, coin, since_ms):
+    """Fills for `coin` since `since_ms` that reduced/closed a position - used to reconcile
+    a position that disappeared without our own code closing it (most likely: liquidation),
+    so the journal logs the real outcome instead of leaving a permanently-stale 'open' row."""
+    fills = info.user_fills(address)
+    return [
+        f for f in fills
+        if f["coin"] == coin and f["time"] >= since_ms and f["dir"].startswith("Close")
+    ]
+
+
 def diff_positions(previous, current):
     """Compares two fetch_wallet_state() position dicts. Returns opened/closed/changed coin lists."""
     prev_coins = set(previous.keys())

@@ -24,9 +24,15 @@ def log_open(coin, side, size, whale_address, entry_price, reasoning):
         ])
 
 
-def _generate_outcome_note(side, confirmation_reasoning, pnl_pct):
+def _generate_outcome_note(side, confirmation_reasoning, pnl_pct, liquidated=False):
     won = pnl_pct > 0
     signal_count = len(confirmation_reasoning.split(" | ")) if confirmation_reasoning else 0
+    if liquidated:
+        return (
+            f"LIQUIDATED ({pnl_pct:+.2f}%): position was force-closed by the exchange before "
+            f"the strategy's own exit logic acted - this is a margin/sizing problem, not "
+            f"evidence the {signal_count} entry signal(s) were wrong."
+        )
     if won:
         return f"Won ({pnl_pct:+.2f}%): entered with {signal_count} confirming signal(s) - direction played out as expected."
     return (
@@ -35,7 +41,7 @@ def _generate_outcome_note(side, confirmation_reasoning, pnl_pct):
     )
 
 
-def log_close(coin, exit_price, pnl_usd):
+def log_close(coin, exit_price, pnl_usd, liquidated=False):
     """Finds the most recent still-open journal row for this coin and fills in the outcome."""
     if not os.path.exists(JOURNAL_FILE):
         return None
@@ -55,7 +61,7 @@ def log_close(coin, exit_price, pnl_usd):
             row["exit_price"] = f"{exit_price:.6f}"
             row["pnl_usd"] = f"{pnl_usd:.4f}"
             row["pnl_pct"] = f"{pnl_pct:.2f}"
-            row["outcome_note"] = _generate_outcome_note(row["side"], row["confirmation_reasoning"], pnl_pct)
+            row["outcome_note"] = _generate_outcome_note(row["side"], row["confirmation_reasoning"], pnl_pct, liquidated)
             updated_row = row
             break
 

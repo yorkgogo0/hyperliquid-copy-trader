@@ -1,13 +1,18 @@
 """Live dashboard for the copy-trading bot. Run with: streamlit run dashboard.py
 
-Main menu: account overview. Trade Journal: every copy this bot has placed, with the
-confirmation reasoning that justified entry and an outcome note once closed.
+Main menu: account overview. Bot Control: start/stop the running strategy loop and set its
+leverage - this page writes to bot_control.json, it doesn't run the loop itself (Streamlit's
+request/response model isn't suited to hosting a long-running process; solo_bot.py/bot.py
+run as their own separate process and just read this file every cycle). Trade Journal: every
+trade the bot has placed, with the reasoning that justified entry and an outcome note once
+closed.
 """
 
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+import bot_control
 import config
 import journal
 import monitor
@@ -16,9 +21,40 @@ st.set_page_config(page_title="Copy-Trader", layout="wide")
 st.title("Hyperliquid Copy-Trader")
 st.caption(f"Network: {config.NETWORK}. Read-only account view + trade journal - this page never places an order.")
 
-page = st.sidebar.radio("Menu", ["Account Overview", "Trade Journal"])
+page = st.sidebar.radio("Menu", ["Account Overview", "Bot Control", "Trade Journal"])
 
-if page == "Account Overview":
+if page == "Bot Control":
+    st.subheader("Bot Control")
+    st.caption(
+        "Controls whichever bot process is actually running (solo_bot.py or bot.py) - this "
+        "page doesn't start the process itself, it just changes what an already-running one does."
+    )
+    control = bot_control.read_control()
+
+    running = st.toggle("Trading enabled", value=control["running"])
+    if running != control["running"]:
+        bot_control.write_control(running=running)
+        st.rerun()
+
+    if running:
+        st.success("Running - will open new positions on confirmed signals.")
+    else:
+        st.warning("Paused - will NOT open new positions, but still manages exits on anything already open.")
+
+    st.divider()
+    st.write("**Leverage for new positions** (doesn't affect positions already open)")
+    leverage = st.radio(
+        "Leverage", bot_control.ALLOWED_LEVERAGES,
+        index=bot_control.ALLOWED_LEVERAGES.index(control["leverage"]),
+        format_func=lambda x: f"{x}x", horizontal=True,
+    )
+    if leverage != control["leverage"]:
+        bot_control.write_control(leverage=leverage)
+        st.rerun()
+
+    st.caption(f"Current: {'Running' if control['running'] else 'Paused'}, {control['leverage']}x leverage on new positions.")
+
+elif page == "Account Overview":
     if st.button("Refresh"):
         st.rerun()
     if not config.ACCOUNT_ADDRESS:

@@ -3,6 +3,12 @@ tracking, no confirmation gate (there's nothing to confirm against). Opens a pos
 a coin gets a Long/Short call that already passed bitcoin-intel-agent's own no-trade rules,
 sized by its confidence tier. Closes when the live analysis no longer agrees with holding
 the position (bias changed), or price has crossed the freshly-recomputed invalidation/target.
+
+Reads bot_control.json every cycle (written by the dashboard's Bot Control page): pausing
+("running": false) stops new entries but still manages exits on whatever's already open -
+abandoning risk management on an open position because trading was paused would be worse
+than just not opening anything new. The leverage value there overrides config.MAX_LEVERAGE
+for new orders only - it doesn't retroactively change positions already open.
 """
 
 import os
@@ -10,6 +16,7 @@ import sys
 import time
 from datetime import datetime, timezone
 
+import bot_control
 import config
 import executor
 import journal
@@ -26,14 +33,37 @@ def log(msg):
     print(f"[{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}] {msg}")
 
 
-def compute_solo_size(my_account_value, entry_price, size_tier):
+def reconcile_phantom_closes(info, my_state):
+    """A journal row can still show 'open' for a coin we no longer hold if something closed
+    it outside our own exit logic - in practice, a liquidation (caught live: a position
+    vanished between poll cycles with no log_close ever called, because the exchange closed
+    it directly, not through executor.close_position()). Looks up the real fill so the
+    journal records what actually happened instead of going stale forever."""
+    for row in journal.load_journal():
+        if row["closed_at"] or row["coin"] in my_state["positions"]:
+            continue
+        opened_at = datetime.strptime(row["opened_at"], "%Y-%m-%d %H:%M:%S UTC").replace(tzinfo=timezone.utc)
+        since_ms = int(opened_at.timestamp() * 1000)
+        fills = monitor.fetch_closing_fills(info, config.ACCOUNT_ADDRESS, row["coin"], since_ms)
+        if not fills:
+            log(f"{row['coin']}: journal shows open but position is gone, and no closing fills found - leaving as-is")
+            continue
+        total_size = sum(float(f["sz"]) for f in fills)
+        avg_price = sum(float(f["sz"]) * float(f["px"]) for f in fills) / total_size
+        total_pnl = sum(float(f.get("closedPnl") or 0.0) for f in fills)
+        was_liquidated = any(f.get("liquidation") for f in fills)
+        log(f"{row['coin']}: reconciling phantom close - {'LIQUIDATED' if was_liquidated else 'closed externally'} at avg ${avg_price:,.4f}, pnl ${total_pnl:+.2f}")
+        journal.log_close(row["coin"], avg_price, total_pnl, liquidated=was_liquidated)
+
+
+def compute_solo_size(my_account_value, entry_price, size_tier, leverage):
     """No whale to be proportional to - sizes directly off our own risk cap and confidence tier."""
     tier_multiplier = risk.SIZE_TIER_MULTIPLIERS.get(size_tier, 1.0)
     risk_pct = config.MAX_RISK_PCT_PER_TRADE * tier_multiplier
     margin_usd = risk_pct / 100 * my_account_value
-    notional_usd = margin_usd * config.MAX_LEVERAGE
+    notional_usd = margin_usd * leverage
     size = notional_usd / entry_price if entry_price else 0.0
-    return {"risk_pct": risk_pct, "leverage": config.MAX_LEVERAGE, "margin_usd": margin_usd, "size": size}
+    return {"risk_pct": risk_pct, "leverage": leverage, "margin_usd": margin_usd, "size": size}
 
 
 def run(poll_seconds=60, max_iterations=None):
@@ -44,11 +74,16 @@ def run(poll_seconds=60, max_iterations=None):
     iteration = 0
     while max_iterations is None or iteration < max_iterations:
         iteration += 1
+        control = bot_control.read_control()
         my_state = monitor.fetch_wallet_state(info, config.ACCOUNT_ADDRESS)
+        reconcile_phantom_closes(info, my_state)
 
         if risk.daily_loss_breached(starting_equity, my_state["account_value"], config.DAILY_LOSS_CIRCUIT_BREAKER_PCT):
             log(f"CIRCUIT BREAKER TRIPPED - down more than {config.DAILY_LOSS_CIRCUIT_BREAKER_PCT}% today. Halting.")
             break
+
+        if not control["running"]:
+            log(f"Paused via dashboard - managing exits on open positions only, not opening anything new ({len(my_state['positions'])} open)")
 
         for coin in COINS:
             try:
@@ -78,13 +113,15 @@ def run(poll_seconds=60, max_iterations=None):
                         log(f"Could not parse close fill for journal - {coin}")
                 continue
 
+            if not control["running"]:
+                continue
             if report["bias"] not in ("Long", "Short"):
                 continue
             if len(my_state["positions"]) >= config.MAX_CONCURRENT_POSITIONS:
                 log(f"{coin}: signal is {report['bias']} but at the {config.MAX_CONCURRENT_POSITIONS}-position cap - skipping")
                 continue
 
-            sizing = compute_solo_size(my_state["account_value"], report["price"], report["size_tier"])
+            sizing = compute_solo_size(my_state["account_value"], report["price"], report["size_tier"], control["leverage"])
             log(
                 f"{coin}: {report['bias']} signal ({report['size_tier']} tier, "
                 f"{len(report['supporting_signals'])} supporting signals) - requesting {sizing['size']:.6f} "

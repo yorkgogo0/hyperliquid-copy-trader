@@ -2,3 +2,4 @@
 __pycache__/
 *.pyc
 trade_journal.csv
+bot_control.json
